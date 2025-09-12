@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::process;
 
-
+// Enum for error states (#14: Enum, #16: Pattern Matching)
 #[derive(Debug)]
 enum CliError {
     MissingFilePath,
@@ -11,9 +11,11 @@ enum CliError {
     InvalidStartsWith { value: String, reason: String },
     FileNotFound(String),
     FileReadPermission(String),
+    FileReadError(String),
     EmptyFile,
 }
 
+// Builder Pattern for configuration (#1)
 #[derive(Default)]
 struct Config {
     file_path: String,
@@ -24,7 +26,6 @@ struct Config {
 impl Config {
     fn new(args: Vec<String>) -> Result<Self, CliError> {
         let mut config = Config::default();
-        
         if args.len() < 2 {
             return Err(CliError::MissingFilePath);
         }
@@ -69,21 +70,17 @@ impl Config {
                     }
                     config.starts_with = Some(c.to_ascii_lowercase());
                 }
-                _ => {}
+                _ => {
+                    i += 1;
+                }
             }
-            i += 1;
         }
         Ok(config)
     }
 }
 
-fn main() {
-    if let Err(err) = run() {
-        process::exit(err.into());
-    }
-}
+// Program logic (#11: Functional Programming)
 fn run() -> Result<(), CliError> {
-    
     let args: Vec<String> = env::args().collect();
     let config = Config::new(args)?;
 
@@ -96,46 +93,74 @@ fn run() -> Result<(), CliError> {
         return Err(CliError::EmptyFile);
     }
 
-    let min_filter = |min_len: usize| move |word: &str| word.len() > min_len;
-    let starts_filter = |c: Option<char>| move |word: &str| {
+    // Curried closures (#7: Currying, #10: Closure)
+    let min_filter = |min_len: usize| move |word: &String| word.len() > min_len;
+    let starts_filter = |c: Option<char>| move |word: &String| {
         c.map_or(true, |c| {
             word.chars()
                 .next()
                 .map_or(false, |first| first.to_ascii_lowercase() == c)
         })
     };
-    let combined_filter = |word: &str| min_filter(config.min_length)(word) && starts_filter(config.starts_with)(word);
+    let combined_filter = |word: &String| {
+        min_filter(config.min_length)(word)
+            && starts_filter(config.starts_with)(word)
+    };
 
-    let freq: HashMap<String, u32> = text
+    // Count frequencies and sum lengths (#11: Functional Programming, #12: Lazy Evaluation)
+    let (freq, sum_length): (HashMap<String, u32>, usize) = text
         .split_whitespace()
-        .map(|w| w.to_lowercase())
-        .filter(|w| !w.is_empty())
-        .filter(combined_filter)
-        .fold(HashMap::new(), |mut acc, word| {
-            *acc.entry(word).or_insert(0) += 1;
-            acc
-        });
+        .map(|w| w.to_lowercase()) // #3: Map, produces String
+        .filter(|w: &String| !w.is_empty())
+        .filter(combined_filter) // #5: Function Composition
+        .fold(
+            (HashMap::new(), 0),
+            |(mut freq, sum_length), word| {
+                *freq.entry(word.clone()).or_insert(0) += 1;
+                (freq, sum_length + word.len())
+            },
+        );
 
+    // Stats (#6: Sum)
     let total_words: u32 = freq.values().sum();
+    let average_length = if total_words > 0 {
+        (sum_length as f64 / total_words as f64).round() as usize
+    } else {
+        0
+    };
     let unique_words = freq.len();
     let most_common = freq
         .iter()
         .max_by_key(|&(word, &count)| (count, std::cmp::Reverse(word)));
 
-    println!("Total word count: {}", total_words);
-    println!("Number of unique words: {}", unique_words);
+    // Output
+    println!("=== Text Analyzer Results ===");
+    println!("File: {}", config.file_path);
+    println!("Filters Applied:");
+    println!("  Minimum length: {}", config.min_length);
+    if let Some(c) = config.starts_with {
+        println!("  Starts with: {}", c);
+    }
+    println!("\nStats:");
+    println!("  Total word count: {}", total_words);
+    println!("  Number of unique words: {}", unique_words);
+    println!("  Average word length: {} chars", average_length);
     match most_common {
-        Some((word, &count)) => println!("Most common word: \"{}\" with count {}", word, count),
-        None => println!("No words found."),
+        Some((word, &count)) => println!("  Most common word: \"{}\" with count {}", word, count),
+        None => println!("  No words found."),
     }
 
     Ok(())
 }
 
+// Error to exit code (#16: Pattern Matching)
 impl From<CliError> for i32 {
     fn from(err: CliError) -> i32 {
         match err {
-            CliError::MissingFilePath => { eprintln!("Error: Missing file path."); 1 }
+            CliError::MissingFilePath => {
+                eprintln!("Error: Missing file path.");
+                1
+            }
             CliError::InvalidMinLength { value, reason } => {
                 eprintln!("Error: Invalid --min-length '{}': {}", value, reason);
                 2
@@ -144,12 +169,28 @@ impl From<CliError> for i32 {
                 eprintln!("Error: Invalid --starts-with '{}': {}", value, reason);
                 3
             }
-            CliError::FileNotFound(path) => { eprintln!("Error: File '{}' not found.", path); 4 }
+            CliError::FileNotFound(path) => {
+                eprintln!("Error: File '{}' not found.", path);
+                4
+            }
             CliError::FileReadPermission(path) => {
                 eprintln!("Error: Permission denied reading '{}'.", path);
                 5
             }
-            CliError::EmptyFile => { eprintln!("Error: File is empty."); 6 }
+            CliError::FileReadError(e) => {
+                eprintln!("Error: Failed to read file: {}", e);
+                6
+            }
+            CliError::EmptyFile => {
+                eprintln!("Error: File is empty.");
+                7
+            }
         }
+    }
+}
+
+fn main() {
+    if let Err(err) = run() {
+        process::exit(err.into());
     }
 }
